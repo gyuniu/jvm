@@ -1,5 +1,3 @@
-
-
 # JUC
 
 JUC指的是 `java.util.concurrent`  这个包中的内容。
@@ -229,8 +227,6 @@ ThreadLocal变量类似于全局变量，它能降低代码的可重用性，并
 | :-------------------------------------------------------- | ------------------------------------------------------------ |
 | get()与null                                               | 如果从未在Thread中的Map存储ThreadLocal对象对应的值，则get()方法返回null。`ThreadLocal.ThreadLocalMap threadLocals = null;` |
 | set()                                                     | 1.  getMap(thread)   →   ThreadLocal.ThreadLocalMap   ThreadLocalMap是ThreadLocal的内部类<br />2.  createMap(thread,value) → new ThreadLocalMap(this,value)<br />3.  将ThreadLocal对象与value封装进Entry |
-|                                                           |                                                              |
-|                                                           |                                                              |
 
 get()
 
@@ -311,7 +307,7 @@ ThreadLocal.ThreadLocalMap threadLocals = null; threadLocals 默认是包级访�
 
 ### 弱引用
 
-ThreadLocalMap中的静态内置类Entry是弱引用类型。
+ThreadLocalMap中的静态内置类Entry是对于ThreadLocal对象是弱引用。
 
 ```java 
 // WeakReference的构造方法中说：创建一个适用于k的弱引用。也就是说会有一个弱引用指向ThreadLocal<?> k
@@ -325,17 +321,17 @@ static class Entry extends WeakReference<ThreadLocal<?>> {
 }
 ```
 
+**ThreadLocalMap的设计者已经尽可能的为我们减少了内存溢出的可能，但是仍然需要我们做一些操作：threadLocal.remove() 方法。**
+
 只要垃圾回收器扫描时发现弱引用的对象，则不管内存是否足够，都会回收弱引用的对象。也就是只要执行gc操作，ThreadLocal对象就立即销毁，代表key的值ThreadLocal对象会随着gc操作而销毁，释放内存空间，但是value值不会随着gc而销毁，这就会出现内存溢出。
 
 当ThreadLocalMap中的数据不再使用时，要手动执行ThreadLocal.remove()方法，清除数据，释放内存空间，否则会出现内存溢出。
 
 
 
+**为什么要用弱引用呢？强引用可不可以？为什么是key值为弱引用呢？value值可不可以？**
 
-
-如果是强引用Entry该怎么定义呢？
-
-1. 也就是说Entry是一个单值的value，并不是之前Map里面的Entry，有key有value。
+首先，如果是强引用Entry该怎么定义呢？
 
 ```java 
 static class Entry {
@@ -348,32 +344,19 @@ static class Entry {
 }
 ```
 
-2. 甚至Entry直接是一个Object就可以了，没必要再包一层。
+1. key和value都是Entry的实例变量了，只要Entry对象不被销毁，这两个实例变量就不能被销毁。
 
-```java 
-static class ThreadLocalMap { 
-    // private Entry[] table;
-    private Object[] table;
-    
-    ThreadLocalMap(ThreadLocal<?> firstKey, Object firstValue) {
-        table = new Object[INITIAL_CAPACITY]; // new Entry[16]
-        int i = firstKey.threadLocalHashCode & (INITIAL_CAPACITY - 1);
-        Object[i] = firstValue;  // 核心代码
-        size = 1;
-        setThreshold(INITIAL_CAPACITY);  // threshold = len * 2 / 3;
-    } 
-}
-```
+2. Entry是存在于ThreadLocalMap中的，也就是只要ThreadLocalMap不被销毁，Entry就不能被销毁。
 
+3. ThreadLocalMap map是存在于线程中的（threadLocals），只要线程还在，这个map就还在。
 
+也就是说，如果是强引用，只要线程还在，这个Entry中的key，value值就不能被回收。但是设置其中一个为弱引用的话，JVM就能保证销毁其中一个，另外一个需要我们在不用它的时候手动置空。
 
-我认为，ThreadLocal不一定是一个方法创建的。在一个方法中创建ThreadLocal对象有意义吗？ThreadLocal对象作为类A一个静态变量或者实例变量出现。
+<img src="juc_img/1664097771562.png" alt="1664097771562" style="zoom:80%;" />
 
-这个线程执行完了。但是这个类A的对象还存在。也就是它的ThreadLocal变量还存在。
+对于一个线程来说，放在其threadLocals这个map的key、value值，我们需要保证其在不用的时候及时被回收。threadLocal对象是没有实际用处的，我们业务逻辑中一般需要的是它对应的value值，所以将ThreadLocal设置为弱引用更合理。
 
-对象A 和 ThreadLocal变量。
-
-一个线程里面有一个ThreadLocalMap。这个ThreadLocalMap对象，里面维护了一个Entry数组。Entry的每一个对象，弱引用于这个ThreadLocal变量，强引用于value。
+如果将ThreadLocal设置为强引用，就加大了内存溢出的风险。因为只要线程还在，这个值即使永远不用了，它也会存在。设置为弱引用之后，就会被自动回收。当然，由于value是强引用，在不用这个value值的时候，我们需要手动置空才可以。
 
 
 
